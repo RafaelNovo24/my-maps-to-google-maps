@@ -3,3 +3,5 @@ services:
     build: .
     ports:
       - "8501:8501"
+    environment:
+      - GOOGLE_MAPS_API_KEY=${GOOGLE_MAPS_API_KEY:-}

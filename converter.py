@@ -43,10 +43,12 @@ class Layer:
     Attributes:
         name (str): The layer's display name.
         points (list[Point]): The point markers contained in the layer.
+        has_route (bool): True when the layer contains at least one LineString.
     """
 
     name: str
     points: list[Point] = field(default_factory=list)
+    has_route: bool = False
 
 
 def kml_from_upload(filename: str, data: bytes) -> str:
@@ -90,28 +92,9 @@ def _reject_networklink_stub(text: str) -> None:
         return
     if "<Placemark" in text:
         return
-    root = ET.fromstring(text)
-    ns = _kml_namespace(root)
-    document = root.find(_tag(ns, "Document"))
-    search_root = document if document is not None else root
-    nl = search_root.find(_tag(ns, "NetworkLink"))
-    href: str | None = None
-    if nl is not None:
-        link_elem = nl.find(_tag(ns, "Link"))
-        if link_elem is not None:
-            href_elem = link_elem.find(_tag(ns, "href"))
-            if href_elem is not None:
-                href = (href_elem.text or "").strip() or None
-    if href:
-        raise ValueError(
-            "This file only links to an online My Maps map and contains no points. "
-            "Paste this link into the 'My Maps link' box instead:\n"
-            f"{href}\n"
-            "(Or open the map in My Maps and export it as KML.)"
-        )
     raise ValueError(
         "This file only links to an online My Maps map and contains no points. "
-        "(Or open the map in My Maps and export it as KML.)"
+        "In My Maps, export the map as KML (with its data) and upload that file."
     )
 
 
@@ -200,7 +183,8 @@ def parse_layers(kml_text: str) -> list[Layer]:
 
     doc_name = _text(document.find(_tag(ns, "name"))) or "Layer 1"
     points = _placemarks_to_points(document, ns)
-    return [Layer(name=doc_name, points=points)]
+    has_route = document.find(".//" + _tag(ns, "LineString")) is not None
+    return [Layer(name=doc_name, points=points, has_route=has_route)]
 
 
 def _kml_namespace(root: ET.Element) -> str:
@@ -223,7 +207,8 @@ def _text(element: ET.Element | None) -> str:
 def _layer_from_folder(folder: ET.Element, ns: str, index: int) -> Layer:
     name = _text(folder.find(_tag(ns, "name"))) or f"Layer {index}"
     points = _placemarks_to_points(folder, ns)
-    return Layer(name=name, points=points)
+    has_route = folder.find(".//" + _tag(ns, "LineString")) is not None
+    return Layer(name=name, points=points, has_route=has_route)
 
 
 def _placemarks_to_points(parent: ET.Element, ns: str) -> list[Point]:
@@ -322,5 +307,3 @@ def _leg_url(leg: list[Point], travel_mode: str) -> str:
         base += f"&waypoints={waypoints}"
     base += f"&travelmode={travel_mode}"
     return base
-
-

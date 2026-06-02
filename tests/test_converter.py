@@ -396,18 +396,145 @@ _KML_NETWORKLINK_WITH_PLACEMARK = """\
 
 
 def test_kml_from_upload_networklink_stub_raises():
-    with pytest.raises(ValueError, match="TESTMID"):
+    with pytest.raises(ValueError) as exc_info:
         kml_from_upload("doc.kml", _KML_NETWORKLINK_STUB.encode("utf-8"))
+    msg = str(exc_info.value)
+    assert "export" in msg
+    assert "KML" in msg
 
 
 def test_kml_from_upload_networklink_stub_kmz_raises():
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("doc.kml", _KML_NETWORKLINK_STUB)
-    with pytest.raises(ValueError, match="TESTMID"):
+    with pytest.raises(ValueError) as exc_info:
         kml_from_upload("export.kmz", buf.getvalue())
+    msg = str(exc_info.value)
+    assert "export" in msg
+    assert "KML" in msg
 
 
 def test_kml_from_upload_networklink_with_placemark_ok():
     result = kml_from_upload("doc.kml", _KML_NETWORKLINK_WITH_PLACEMARK.encode("utf-8"))
     assert "NetworkLink" in result
+
+
+# ---------------------------------------------------------------------------
+# has_route detection
+# ---------------------------------------------------------------------------
+
+_KML_FOLDER_WITH_LINESTRING = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <Folder>
+      <name>Route Layer</name>
+      <Placemark>
+        <name>Segment</name>
+        <LineString><coordinates>1.0,2.0 3.0,4.0</coordinates></LineString>
+      </Placemark>
+      <Placemark>
+        <name>Stop</name>
+        <Point><coordinates>5.0,6.0,0</coordinates></Point>
+      </Placemark>
+    </Folder>
+  </Document>
+</kml>
+"""
+
+_KML_FOLDER_POINTS_ONLY = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <Folder>
+      <name>Points Only</name>
+      <Placemark>
+        <name>A</name>
+        <Point><coordinates>1.0,2.0,0</coordinates></Point>
+      </Placemark>
+      <Placemark>
+        <name>B</name>
+        <Point><coordinates>3.0,4.0,0</coordinates></Point>
+      </Placemark>
+    </Folder>
+  </Document>
+</kml>
+"""
+
+_KML_MULTI_FOLDER_MIXED = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <Folder>
+      <name>With Route</name>
+      <Placemark>
+        <name>Segment</name>
+        <LineString><coordinates>1.0,2.0 3.0,4.0</coordinates></LineString>
+      </Placemark>
+    </Folder>
+    <Folder>
+      <name>No Route</name>
+      <Placemark>
+        <name>Stop</name>
+        <Point><coordinates>5.0,6.0,0</coordinates></Point>
+      </Placemark>
+    </Folder>
+  </Document>
+</kml>
+"""
+
+_KML_NO_FOLDER_WITH_LINESTRING = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Flat With Route</name>
+    <Placemark>
+      <name>Segment</name>
+      <LineString><coordinates>1.0,2.0 3.0,4.0</coordinates></LineString>
+    </Placemark>
+    <Placemark>
+      <name>Stop</name>
+      <Point><coordinates>5.0,6.0,0</coordinates></Point>
+    </Placemark>
+  </Document>
+</kml>
+"""
+
+_KML_NO_FOLDER_POINTS_ONLY = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Flat Points Only</name>
+    <Placemark>
+      <name>A</name>
+      <Point><coordinates>1.0,2.0,0</coordinates></Point>
+    </Placemark>
+  </Document>
+</kml>
+"""
+
+
+def test_has_route_folder_with_linestring():
+    layers = parse_layers(_KML_FOLDER_WITH_LINESTRING)
+    assert layers[0].has_route is True
+
+
+def test_has_route_folder_points_only():
+    layers = parse_layers(_KML_FOLDER_POINTS_ONLY)
+    assert layers[0].has_route is False
+
+
+def test_has_route_multi_folder_correct_per_layer():
+    layers = parse_layers(_KML_MULTI_FOLDER_MIXED)
+    assert layers[0].has_route is True
+    assert layers[1].has_route is False
+
+
+def test_has_route_no_folder_with_linestring():
+    layers = parse_layers(_KML_NO_FOLDER_WITH_LINESTRING)
+    assert layers[0].has_route is True
+
+
+def test_has_route_no_folder_points_only():
+    layers = parse_layers(_KML_NO_FOLDER_POINTS_ONLY)
+    assert layers[0].has_route is False
