@@ -164,3 +164,104 @@ string check so normal/large KML isn't double-parsed.
 - **KML-only UI:** the file uploader accepts **`.kml` only** (drop `.kmz`). The
   converter's KMZ code stays for the deferred "open KMZ" work. The My Maps
   **link input and travel-mode dropdown are kept**.
+
+### Change request #3 (2026-06-02): languages, journey table with real ETAs, KML-only input
+
+**Decisions (from user):** real Google **Directions API** ETAs; **hide** pin-only
+layers; rename the journey unit to **"Stretch"**; default UI language **Portuguese**.
+
+> **STATUS: planned, not implemented** (user asked to plan only).
+
+#### 1. Internationalization — English + Portuguese (default PT)
+- New `i18n.py`: `TRANSLATIONS = {"pt": {...}, "en": {...}}` covering every UI
+  string, plus a `t(key, lang)` helper.
+- A language selector at the top (default **Portuguese**), choice held in
+  `st.session_state`.
+- Only the app's own chrome is translated; KML-derived text (layer names, etc.)
+  is shown verbatim.
+
+#### 2. Input: KML upload only
+- Remove the "My Maps link" input method and the input-method radio — the UI
+  becomes just a `.kml` uploader.
+- Retire the now-unused `kml_from_mymaps_url` + `mymaps_export_url` and their
+  tests.
+- Update `_reject_networklink_stub`'s message (it referenced "the My Maps link
+  box", which no longer exists) → advise exporting the map as KML with data.
+
+#### 3. Layer model — stretches vs hidden pins
+- A layer is a journey **"stretch"** iff it has route geometry (`<LineString>`).
+  Add a boolean to `Layer` (e.g. `has_route`) set during parsing (detect a
+  `<LineString>` in the folder — no need to parse its thousands of coordinates).
+- Pin-only layers (no LineString — e.g. the 55-point "Camada sem título") are
+  **hidden entirely**. (Refines CR#2's "≥2 points = route" for the journey UI.)
+
+#### 4. Real ETAs via Google Directions API — NEW, needs API key + billing
+- New `directions.py`: given a stretch's ordered waypoints, call the Google
+  Directions API and return `{distance_text, distance_m, duration_low,
+  duration_high, duration_text}`.
+- **Verified API (2026-06-02 Doublecheck):** use the **Routes API**
+  (`POST https://routes.googleapis.com/directions/v2:computeRoutes`); key via
+  `X-Goog-Api-Key` header; `X-Goog-FieldMask: routes.distanceMeters,routes.duration`;
+  waypoints as `intermediates[].location.latLng` (max 25). `routes[].duration`
+  is a **string** like `"123s"` (strip `s`, parse). **Range:** no native range —
+  for `DRIVE`, two calls with `trafficModel` OPTIMISTIC then PESSIMISTIC
+  (require `routingPreference: TRAFFIC_AWARE_OPTIMAL` + `departureTime`); other
+  modes → single duration (1 call). Modes: `DRIVE/WALK/BICYCLE/TWO_WHEELER/TRANSIT`.
+  (Doc conflict on whether `trafficModel` also allows `TRAFFIC_AWARE` — verify
+  live once a key exists.)
+- **API key:** read from env `GOOGLE_MAPS_API_KEY` (and/or Streamlit secrets),
+  passed into the container via `docker-compose.yml` (`environment:`).
+- **Graceful degradation:** with no key or on API error/quota, still show the
+  stretch + its Maps link + description; show distance/time as "unavailable"
+  with a clear message. Never crash.
+- **Caching:** `st.cache_data` keyed by the stretch's coordinates + travel mode.
+- **Cost:** ~5 billed calls per load for this map (cached) — flagged to user.
+- Tests **mock** the HTTP layer (monkeypatch `requests`) — no real API calls.
+
+#### 5. Journey summary table + per-stretch detail + totals
+- After upload, a **summary table** (rendered as Markdown so cells hold links),
+  one row per stretch:
+  `# | Description (anchor link) | Distance | Time range | Open in Google Maps`
+  - Description cell = `[name](#stretch-n)` anchor link → scrolls to that
+    stretch's detail ("select the stretch → jump to its detail").
+  - Maps cell links to the generated route URL; if a stretch splits into >1 link
+    (waypoints exceed the 9-stop cap), the cell points to the detail section,
+    which lists all its links.
+- **Total journey metrics:** `st.metric` for total distance and total time range
+  (summed across stretches).
+- **Per-stretch detail sections:** `st.subheader(name, anchor=f"stretch-{n}")`,
+  the Google Maps link button(s) (still empty-origin, 9 stops/link per CR#2), the
+  `st.map` preview, and that stretch's distance/time.
+- Rename all "leg" wording → "Stretch" (CR#2's "Split into N legs" → per-stretch
+  "link 1 of 2").
+
+#### Files
+- New: `i18n.py`, `directions.py`, `tests/test_directions.py`.
+- Changed: `app.py` (large render rewrite), `converter.py` (`has_route` detection;
+  remove link funcs), `tests/test_converter.py`, `docker-compose.yml` (env
+  passthrough), `README.md`. No new dependency (`requests` already present).
+
+#### Open flags to confirm
+- **API key + billing is now required** for ETAs — user must supply
+  `GOOGLE_MAPS_API_KEY`; without it, links work but distance/time are unavailable.
+- **Directions API vs Routes API:** Routes API is Google's current
+  recommendation; legacy Directions API has the simplest `traffic_model` range.
+  A Doublecheck step picks the right one before coding.
+- **Empty-origin nuance:** CR#2 makes every link start empty (user fills start),
+  but a stretch "A→B" has a natural start A. The ETA is computed A→B; the link
+  still opens empty. Confirm whether stretch links should instead start at A.
+- **Multi-link stretches** (10-waypoint layers → 2 links): table → detail; detail
+  lists both.
+
+#### Build sequence (when approved)
+1. Doublecheck: confirm the Directions/Routes API (endpoint, request/response,
+   key, pricing, time-range mechanism).
+2. `directions.py` + mocked tests → Doublecheck → run tests.
+3. `converter.py`: `has_route` detection + retire link funcs + tests.
+4. `i18n.py` (EN/PT strings) + helper.
+5. `app.py`: language selector, KML-only input, stretch filtering, summary table
+   + anchors + totals + per-stretch detail; wire `directions.py` (graceful no-key).
+6. `docker-compose.yml` env, `README.md`.
+7. Verify: pytest (local + container), real Galiza KML (with and without key),
+   serve + health.
+8. `code-sanitizer` pass.
