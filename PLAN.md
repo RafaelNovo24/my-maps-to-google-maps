@@ -149,3 +149,18 @@ box (or export as KML); the app already surfaces it via `st.error`. Fast-path
 string check so normal/large KML isn't double-parsed.
 **Deferred:** actually following the NetworkLink to fetch the linked KML
 ("opening KMZ") — future work.
+
+### Change request #2 (2026-06-02): empty start, 9 slots, KML-only UI, no CSV
+- **Route vs. mention:** a layer with **≥2 points** gets Google Maps route
+  link(s); a layer with **0–1 points** is just mentioned, no link (per user:
+  "2+ points = route"). No `<LineString>` parsing needed.
+- **Empty starting slot:** each route link leaves the **origin empty** so the
+  user adds their own start; the layer's points fill up to **9 slots**
+  (waypoints + destination). `MAX_STOPS_PER_LINK` 10 → **9**; layers over 9
+  points split into legs of 9 (1-pt overlap). The single-point search-link
+  branch is removed. Exact empty-origin URL form is Doublecheck-verified.
+- **Remove CSV:** delete the per-layer CSV download button and `points_to_csv`
+  (+ its tests).
+- **KML-only UI:** the file uploader accepts **`.kml` only** (drop `.kmz`). The
+  converter's KMZ code stays for the deferred "open KMZ" work. The My Maps
+  **link input and travel-mode dropdown are kept**.

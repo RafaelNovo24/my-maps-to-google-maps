@@ -6,7 +6,6 @@ directions URLs that respect the platform's per-route waypoint cap.
 """
 from __future__ import annotations
 
-import csv
 import io
 import xml.etree.ElementTree as ET
 import zipfile
@@ -15,7 +14,7 @@ from urllib.parse import parse_qs, quote, urlparse
 
 import requests
 
-MAX_STOPS_PER_LINK = 10
+MAX_STOPS_PER_LINK = 9
 LEG_OVERLAP = 1
 DEFAULT_TRAVEL_MODE = "driving"
 
@@ -267,9 +266,10 @@ def build_route_links(
 ) -> list[str]:
     """Build Google Maps links covering an ordered sequence of points.
 
-    A single point yields one search link; multiple points are split into
-    overlapping legs (because Google Maps caps waypoints per route) and each
-    leg becomes one directions link.
+    Fewer than two points yields an empty list. Otherwise the points are split
+    into overlapping legs (because Google Maps caps waypoints per route) and
+    each leg becomes one directions link with no origin, so the user can supply
+    their own starting point in Google Maps.
 
     Args:
         points (list[Point]): The ordered points to route through.
@@ -282,13 +282,10 @@ def build_route_links(
 
     Returns:
         list[str]: One Google Maps URL per leg, or an empty list when
-            ``points`` is empty.
+            ``points`` has fewer than two entries.
     """
-    if not points:
+    if len(points) < 2:
         return []
-    if len(points) == 1:
-        p = points[0]
-        return [f"https://www.google.com/maps/search/?api=1&query={quote(f'{p.lat},{p.lng}')}"]
 
     legs = _split_into_legs(points, max_stops, overlap)
     return [_leg_url(leg, travel_mode) for leg in legs]
@@ -317,34 +314,13 @@ def _coord(p: Point) -> str:
 
 
 def _leg_url(leg: list[Point], travel_mode: str) -> str:
-    origin = _coord(leg[0])
     destination = _coord(leg[-1])
-    base = (
-        f"https://www.google.com/maps/dir/?api=1"
-        f"&origin={origin}"
-        f"&destination={destination}"
-    )
-    middle = leg[1:-1]
-    if middle:
-        waypoints = "%7C".join(_coord(p) for p in middle)
+    base = f"https://www.google.com/maps/dir/?api=1&destination={destination}"
+    waypoints_points = leg[:-1]
+    if waypoints_points:
+        waypoints = "%7C".join(_coord(p) for p in waypoints_points)
         base += f"&waypoints={waypoints}"
     base += f"&travelmode={travel_mode}"
     return base
 
 
-def points_to_csv(points: list[Point]) -> str:
-    """Serialize points to CSV text with a header row.
-
-    Args:
-        points (list[Point]): The points to serialize.
-
-    Returns:
-        str: CSV text with ``name``, ``latitude``, ``longitude`` and
-            ``description`` columns.
-    """
-    buf = io.StringIO()
-    writer = csv.writer(buf)
-    writer.writerow(["name", "latitude", "longitude", "description"])
-    for p in points:
-        writer.writerow([p.name, p.lat, p.lng, p.description])
-    return buf.getvalue()

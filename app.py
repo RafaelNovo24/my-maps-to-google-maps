@@ -1,12 +1,10 @@
 """Streamlit UI for converting a Google My Maps into Google Maps links.
 
-Lets the user supply a map by uploading a KML/KMZ file or pasting a My Maps
-share link, then renders, per layer, the routable Google Maps links, a point
-map, and a CSV download.
+Lets the user supply a map by uploading a KML file or pasting a My Maps
+share link, then renders, per layer, the routable Google Maps links and a
+point map preview.
 """
 from __future__ import annotations
-
-import re
 
 import streamlit as st
 
@@ -23,7 +21,7 @@ travel_mode = st.selectbox(
 
 input_method = st.radio(
     "Input method",
-    ["Upload .kml / .kmz", "My Maps link"],
+    ["Upload .kml", "My Maps link"],
 )
 
 
@@ -56,8 +54,8 @@ def _layers_from_link(url: str) -> list[converter.Layer]:
 
 layers: list[converter.Layer] | None = None
 
-if input_method == "Upload .kml / .kmz":
-    uploaded = st.file_uploader("Choose a .kml or .kmz file", type=["kml", "kmz"])
+if input_method == "Upload .kml":
+    uploaded = st.file_uploader("Choose a .kml file", type=["kml"])
     if uploaded is not None:
         try:
             layers = _layers_from_upload(uploaded.name, uploaded.getvalue())
@@ -78,38 +76,33 @@ if layers is not None:
     else:
         st.caption(
             "Only point markers are converted; lines and polygons are skipped. "
-            "Google Maps caps waypoints per route, so long layers are split into legs."
+            "Each route link opens with an empty start so you can add your own starting point — "
+            "Google Maps will prepend it before the layer's stops. "
+            "Long layers are split into legs (up to 9 stops per link)."
         )
         for layer_index, layer in enumerate(layers):
             st.subheader(f"{layer.name} ({len(layer.points)} points)")
-            if not layer.points:
-                st.info(f"Layer '{layer.name}' has no point markers.")
-                continue
-
-            links = converter.build_route_links(layer.points, travel_mode=travel_mode)
-            n = len(links)
-            if n == 1:
-                st.link_button(
-                    "Open route in Google Maps",
-                    links[0],
-                    key=f"route_{layer_index}",
-                )
-            else:
-                st.write(f"Split into {n} legs:")
-                for i, link in enumerate(links, 1):
+            if len(layer.points) >= 2:
+                links = converter.build_route_links(layer.points, travel_mode=travel_mode)
+                n = len(links)
+                if n == 1:
                     st.link_button(
-                        f"Open leg {i} of {n}",
-                        link,
-                        key=f"leg_{layer_index}_{i}",
+                        "Open route in Google Maps",
+                        links[0],
+                        key=f"route_{layer_index}",
                     )
+                else:
+                    st.write(f"Split into {n} legs:")
+                    for i, link in enumerate(links, 1):
+                        st.link_button(
+                            f"Open leg {i} of {n}",
+                            link,
+                            key=f"leg_{layer_index}_{i}",
+                        )
+            else:
+                st.info(
+                    f"{len(layer.points)} point(s) of interest — no route link (needs at least 2 points)."
+                )
 
-            st.map({"lat": [p.lat for p in layer.points], "lon": [p.lng for p in layer.points]})
-
-            safe_name = re.sub(r"[^\w\-]+", "_", layer.name) or "layer"
-            st.download_button(
-                f"Download {layer.name}.csv",
-                converter.points_to_csv(layer.points),
-                file_name=f"{safe_name}.csv",
-                mime="text/csv",
-                key=f"csv_{layer_index}",
-            )
+            if layer.points:
+                st.map({"lat": [p.lat for p in layer.points], "lon": [p.lng for p in layer.points]})

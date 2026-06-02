@@ -14,7 +14,6 @@ from converter import (
     kml_from_upload,
     mymaps_export_url,
     parse_layers,
-    points_to_csv,
 )
 
 # ---------------------------------------------------------------------------
@@ -183,11 +182,8 @@ def test_build_route_links_empty():
     assert build_route_links([]) == []
 
 
-def test_build_route_links_one_point_search_link():
-    links = build_route_links([Point("X", 10.0, 20.0)])
-    assert len(links) == 1
-    assert "maps/search" in links[0]
-    assert "10.0%2C20.0" in links[0]
+def test_build_route_links_one_point_empty():
+    assert build_route_links([Point("X", 10.0, 20.0)]) == []
 
 
 def test_build_route_links_two_points_one_link():
@@ -195,15 +191,18 @@ def test_build_route_links_two_points_one_link():
     assert len(links) == 1
 
 
-def test_build_route_links_two_points_no_waypoints():
-    links = build_route_links(_pts(2))
-    assert "waypoints" not in links[0]
-
-
-def test_build_route_links_two_points_origin_destination():
+def test_build_route_links_two_points_has_waypoint():
     pts = _pts(2)
     links = build_route_links(pts)
-    assert f"origin={pts[0].lat}%2C{pts[0].lng}" in links[0]
+    # with no origin, pt0 becomes the sole waypoint and pt1 is the destination
+    assert "waypoints=" in links[0]
+    assert f"{pts[0].lat}%2C{pts[0].lng}" in links[0]
+
+
+def test_build_route_links_two_points_no_origin():
+    pts = _pts(2)
+    links = build_route_links(pts)
+    assert "origin=" not in links[0]
     assert f"destination={pts[1].lat}%2C{pts[1].lng}" in links[0]
 
 
@@ -212,18 +211,50 @@ def test_build_route_links_five_points_one_link():
     assert len(links) == 1
 
 
-def test_build_route_links_five_points_three_waypoints():
+def test_build_route_links_five_points_four_waypoints():
     pts = _pts(5)
     links = build_route_links(pts)
-    # waypoints are pts[1], pts[2], pts[3] — 3 intermediate points
+    # waypoints are pts[0..3] (all but the destination pts[4]) — 4 points
     waypoints_part = [p for p in links[0].split("&") if p.startswith("waypoints=")]
     assert len(waypoints_part) == 1
     wps = waypoints_part[0][len("waypoints="):].split("%7C")
-    assert len(wps) == 3
+    assert len(wps) == 4
 
 
-def test_build_route_links_ten_points_one_link():
-    assert len(build_route_links(_pts(10))) == 1
+def test_build_route_links_nine_points_one_link():
+    assert len(build_route_links(_pts(9))) == 1
+
+
+def test_build_route_links_ten_points_two_links():
+    links = build_route_links(_pts(10))
+    assert len(links) == 2
+
+
+def test_build_route_links_ten_points_two_links_overlap():
+    pts = _pts(10)
+    links = build_route_links(pts)
+    assert len(links) == 2
+    # destination of leg 1 == first waypoint of leg 2  (the overlap point)
+    leg1_dest_part = [p for p in links[0].split("&") if p.startswith("destination=")]
+    assert len(leg1_dest_part) == 1
+    leg1_dest = unquote(leg1_dest_part[0][len("destination="):])
+    leg2_wps_part = [p for p in links[1].split("&") if p.startswith("waypoints=")]
+    assert len(leg2_wps_part) == 1
+    leg2_first_wp = unquote(leg2_wps_part[0][len("waypoints="):].split("%7C")[0])
+    assert leg1_dest == leg2_first_wp
+
+
+def test_build_route_links_ten_points_order_preserved():
+    pts = _pts(10)
+    links = build_route_links(pts)
+    # no origin= anywhere
+    assert "origin=" not in links[0]
+    assert "origin=" not in links[1]
+    # leg 1's first waypoint is pts[0]; leg 2's destination is pts[9]
+    leg1_wps_part = [p for p in links[0].split("&") if p.startswith("waypoints=")]
+    first_wp = unquote(leg1_wps_part[0][len("waypoints="):].split("%7C")[0])
+    assert first_wp == f"{pts[0].lat},{pts[0].lng}"
+    assert f"destination={pts[9].lat}%2C{pts[9].lng}" in links[1]
 
 
 def test_build_route_links_twelve_points_two_links():
@@ -231,27 +262,24 @@ def test_build_route_links_twelve_points_two_links():
     assert len(links) == 2
 
 
-def test_build_route_links_twelve_points_overlap():
-    pts = _pts(12)
-    links = build_route_links(pts, max_stops=10, overlap=1)
-    # last point of leg 1
-    leg1_dest_part = [p for p in links[0].split("&") if p.startswith("destination=")]
-    assert len(leg1_dest_part) == 1
-    leg1_dest = unquote(leg1_dest_part[0][len("destination="):])
-    # origin of leg 2
-    leg2_origin_part = [p for p in links[1].split("&") if p.startswith("origin=")]
-    assert len(leg2_origin_part) == 1
-    leg2_origin = unquote(leg2_origin_part[0][len("origin="):])
-    assert leg1_dest == leg2_origin
+def test_build_route_links_no_origin_in_any_link():
+    for n in (2, 5, 9):
+        for link in build_route_links(_pts(n)):
+            assert "origin=" not in link
 
 
-def test_build_route_links_twelve_points_order_preserved():
-    pts = _pts(12)
-    links = build_route_links(pts, max_stops=10, overlap=1)
-    # leg 1 starts at P0
-    assert f"origin={pts[0].lat}%2C{pts[0].lng}" in links[0]
-    # leg 2 ends at P11
-    assert f"destination={pts[11].lat}%2C{pts[11].lng}" in links[1]
+def test_build_route_links_destination_present():
+    for n in (2, 5, 9):
+        for link in build_route_links(_pts(n)):
+            assert "destination=" in link
+
+
+def test_build_route_links_waypoints_separator():
+    # ≥3-point leg → waypoints joined by %7C
+    links = build_route_links(_pts(3))
+    assert "waypoints=" in links[0]
+    wps_part = [p for p in links[0].split("&") if p.startswith("waypoints=")][0]
+    assert "%7C" in wps_part
 
 
 def test_build_route_links_travelmode_default():
@@ -262,38 +290,6 @@ def test_build_route_links_travelmode_default():
 def test_build_route_links_travelmode_custom():
     links = build_route_links(_pts(2), travel_mode="walking")
     assert "travelmode=walking" in links[0]
-
-
-# ---------------------------------------------------------------------------
-# points_to_csv
-# ---------------------------------------------------------------------------
-
-
-def test_points_to_csv_header():
-    csv_text = points_to_csv([])
-    first_line = csv_text.splitlines()[0]
-    assert first_line == "name,latitude,longitude,description"
-
-
-def test_points_to_csv_rows():
-    pts = [
-        Point("Home", 51.5, -0.1, "London"),
-        Point("Work", 51.6, -0.2, ""),
-    ]
-    lines = points_to_csv(pts).splitlines()
-    assert len(lines) == 3  # header + 2 rows
-    assert "Home" in lines[1]
-    assert "51.5" in lines[1]
-    assert "-0.1" in lines[1]
-    assert "London" in lines[1]
-    assert "Work" in lines[2]
-
-
-def test_points_to_csv_empty_description():
-    pts = [Point("X", 1.0, 2.0)]
-    lines = points_to_csv(pts).splitlines()
-    # last column should be empty string
-    assert lines[1].endswith(",")
 
 
 # ---------------------------------------------------------------------------
