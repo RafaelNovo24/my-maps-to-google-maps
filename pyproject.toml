@@ -4,4 +4,28 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "requests>=2.34.2",
+    "streamlit>=1.58.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
+[tool.pylint.basic]
+argument-naming-style = "snake_case"
+variable-naming-style = "snake_case"
+attr-naming-style = "snake_case"
+module-naming-style = "snake_case"
+const-naming-style = "UPPER_CASE"
+class-naming-style = "PascalCase"
+function-naming-style = "snake_case"
+method-naming-style = "snake_case"
+
+[tool.pylint.format]
+max-line-length = 100
