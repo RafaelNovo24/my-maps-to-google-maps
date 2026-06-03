@@ -337,3 +337,73 @@ layers; rename the journey unit to **"Stretch"**; default UI language **Portugue
 2. **Part B:** `assets/` flags + `app.py` flag header + smoke test → boot/serve verify.
 3. (Optional) `$PORT` Docker tweak + README "Deploy" section.
 4. `code-sanitizer` → full pytest + Docker rebuild.
+
+### Change request #5 (2026-06-03): rename to "Travel Assistant" + faithful KML→GPX converter
+
+> **STATUS: approved, implementing.**
+
+#### Decisions (from user)
+- **Browser tab title** → `"Travel Assistant"`, **remove the emoji** page icon
+  (`page_icon=None`). The on-page `st.title` (i18n key `title`) is left unchanged.
+- **New feature: KML→GPX converter**, on the **same page**, converting the **same
+  uploaded KML** (no second uploader). A section with a Convert button → an
+  `st.spinner` while converting → a persistent **Download GPX** button.
+- **Strictly faithful to the KML — never fabricate paths or pins.** Convert only
+  what is literally present.
+
+#### 1. Title / icon (`app.py`)
+- `st.set_page_config(page_title="Travel Assistant", page_icon=None)`.
+
+#### 2. New `gpx.py` — stdlib only (no new dependency; `xml.etree.ElementTree`)
+- `kml_to_gpx(kml_text: str, *, creator="Travel Assistant") -> bytes`.
+- Reuses `converter._kml_namespace` / `_tag` / `_text`.
+- Faithful mapping:
+  - KML `Point` → GPX `<wpt lat lon>` (+ `<name>`, `<desc>` when present; `<ele>`
+    only when the coordinate carries a 3rd altitude value).
+  - KML `LineString` → GPX `<trk><name>…</name><trkseg><trkpt lat lon>…</trkseg></trk>`
+    (track name from placemark/folder name; `<ele>` per point only when present).
+  - KML `Polygon` / other geometry → **skipped** (GPX has no polygon); count skips
+    so the UI can note them.
+  - Walks `MultiGeometry` children (Points / LineStrings).
+- **Coordinate swap (highest risk):** KML `lon,lat[,alt]` → GPX `lat`/`lon`
+  attributes; coordinate tuples split on any whitespace.
+- Root `<gpx version="1.1" creator=… xmlns="http://www.topografix.com/GPX/1/1" …>`;
+  register the GPX namespace as default (no `ns0:` prefix). ElementTree handles
+  XML escaping. Raises a clear error on unparseable KML.
+
+#### 3. UI section (`app.py`, inside `if uploaded is not None:`, below the journey output)
+- Shown whenever the KML parses, **including pins-only / no-stretch maps**.
+- Convert button → `with st.spinner(t("gpx_converting", lang)):` → store
+  `st.session_state["gpx_bytes"]` + `["gpx_filename"]`.
+- Persistent `st.download_button(data=…, file_name="<orig>.gpx",
+  mime="application/gpx+xml")` rendered from session state (survives the
+  download-click rerun). Reset stored bytes when a different file is uploaded.
+- Filename: `<original>.gpx` (strip `.kml`/`.kmz`), fallback `travel.gpx`.
+- Zero points and zero lines → `st.info(t("gpx_no_data", lang))`, no button.
+
+#### 4. i18n (`i18n.py`) — add to **both** `pt` and `en`
+- `gpx_section_header`, `gpx_convert_button`, `gpx_converting`,
+  `gpx_download_button`, `gpx_error`, `gpx_no_data`.
+
+#### Files
+- New: `gpx.py`, `tests/test_gpx.py`.
+- Changed: `app.py`, `i18n.py`, `tests/test_app_smoke.py`.
+- Untouched: `converter.py` (helpers imported, not modified), `directions.py`,
+  `journey.py`, `pyproject.toml` (no new dependency).
+
+#### Tests
+- `tests/test_gpx.py`: coord-swap regression, Point→wpt, LineString→trk,
+  multi-folder→multiple trks, polygon skipped, name/desc/elevation carried,
+  namespace + well-formedness (re-parse output), pins-only, empty/invalid raises,
+  filename-derivation helper.
+- Extend `tests/test_app_smoke.py`: section header renders; convert → download
+  button appears (AppTest).
+
+#### Build sequence (when approved)
+1. `python-implementer` (override briefing): `gpx.py` + `tests/test_gpx.py`;
+   `app.py` title + GPX section; `i18n.py` keys; extend `tests/test_app_smoke.py`.
+2. Doublecheck: verify GPX 1.1 schema (root attrs/namespace, wpt/trkpt lat/lon
+   attribute order) + adversarially review the KML coordinate-swap and
+   geometry-walking logic.
+3. Orchestrator: `uv run pytest -q` → `docker compose up --build` smoke.
+4. `code-sanitizer` (override) → re-run pytest.
