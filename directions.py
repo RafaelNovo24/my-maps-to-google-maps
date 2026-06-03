@@ -129,12 +129,17 @@ def _latlng_body(coord: tuple[float, float]) -> dict:
 
 
 def _departure_time() -> str:
-    """Return the current UTC time formatted for the Routes API.
+    """Return a near-future UTC time formatted for the Routes API.
+
+    The Routes API rejects a ``departureTime`` that is not strictly in the
+    future, so a small buffer is added to absorb second-level truncation,
+    request latency, and minor client/server clock skew.
 
     Returns:
-        str: The present moment as an RFC 3339 timestamp in UTC.
+        str: An RFC 3339 timestamp in UTC, a couple of minutes ahead of now.
     """
-    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    future = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=120)
+    return future.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _estimate_drive(

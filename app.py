@@ -6,6 +6,10 @@ estimated-time totals in the selected language.
 """
 from __future__ import annotations
 
+import base64
+import os
+from pathlib import Path
+
 import streamlit as st
 
 import converter
@@ -14,12 +18,101 @@ import i18n
 import journey
 from i18n import t
 
+
+def _load_dotenv() -> None:
+    """Load ``KEY=VALUE`` pairs from a local ``.env`` file into the environment.
+
+    Reads a ``.env`` file beside this module, if present, and sets each pair in
+    ``os.environ`` without overwriting variables already set, so shell- or
+    container-provided values take precedence. This lets local runs pick up
+    ``GOOGLE_MAPS_API_KEY`` without exporting it by hand. Blank lines, comment
+    lines, and lines without an ``=`` are ignored.
+    """
+    env_path = Path(__file__).parent / ".env"
+    if not env_path.exists():
+        return
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        if key:
+            os.environ.setdefault(key, value.strip().strip('"').strip("'"))
+
+
+_load_dotenv()
+
 st.set_page_config(page_title="My Maps → Google Maps", page_icon="🗺️")
 
-lang = st.selectbox(
-    i18n.t("language_label", "pt"),
-    i18n.LANGUAGES,
-    format_func=lambda c: {"pt": "Português", "en": "English"}[c],
+
+def _flag_data_uri(filename: str) -> str:
+    """Read an SVG flag from ``assets`` and return it as a base64 data URI.
+
+    Args:
+        filename (str): The SVG file name within the ``assets`` directory.
+
+    Returns:
+        str: A ``data:image/svg+xml;base64`` URI embedding the file contents,
+            suitable for use as a CSS ``background-image``.
+    """
+    svg_bytes = (Path(__file__).parent / "assets" / filename).read_bytes()
+    encoded = base64.b64encode(svg_bytes).decode("ascii")
+    return f"data:image/svg+xml;base64,{encoded}"
+
+
+if "lang" not in st.session_state:
+    st.session_state["lang"] = i18n.DEFAULT_LANG
+
+_col_main, _col_pt, _col_en = st.columns([8, 1, 1])
+with _col_pt:
+    if st.button(" ", key="lang_pt", help="Português"):
+        st.session_state["lang"] = "pt"
+with _col_en:
+    if st.button(" ", key="lang_en", help="English"):
+        st.session_state["lang"] = "en"
+
+lang = st.session_state["lang"]
+
+_pt_uri = _flag_data_uri("pt.svg")
+_en_uri = _flag_data_uri("gb.svg")
+_active_border = "2px solid #1a73e8"
+_inactive_border = "2px solid transparent"
+_pt_border = _active_border if lang == "pt" else _inactive_border
+_en_border = _active_border if lang == "en" else _inactive_border
+_pt_opacity = "1.0" if lang == "pt" else "0.45"
+_en_opacity = "1.0" if lang == "en" else "0.45"
+
+st.markdown(
+    f"""<style>
+.st-key-lang_pt button {{
+    background-image: url('{_pt_uri}');
+    background-size: cover;
+    background-position: center;
+    color: transparent !important;
+    width: 48px;
+    height: 32px;
+    min-height: 32px;
+    padding: 0;
+    border: {_pt_border};
+    border-radius: 3px;
+    opacity: {_pt_opacity};
+}}
+.st-key-lang_en button {{
+    background-image: url('{_en_uri}');
+    background-size: cover;
+    background-position: center;
+    color: transparent !important;
+    width: 48px;
+    height: 32px;
+    min-height: 32px;
+    padding: 0;
+    border: {_en_border};
+    border-radius: 3px;
+    opacity: {_en_opacity};
+}}
+</style>""",
+    unsafe_allow_html=True,
 )
 
 st.title(t("title", lang))

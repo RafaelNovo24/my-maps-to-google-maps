@@ -15,5 +15,5 @@ def test_app_loads():
 
 def test_language_switch_no_crash():
     at = AppTest.from_file(APP).run()
-    at.selectbox[0].set_value("en").run()
+    at.button(key="lang_en").click().run()
     assert not at.exception

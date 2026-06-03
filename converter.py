@@ -77,6 +77,20 @@ def kml_from_upload(filename: str, data: bytes) -> str:
 
 
 def _extract_kml_from_kmz(data: bytes) -> str:
+    """Extract the KML document text from KMZ archive bytes.
+
+    Prefers a ``doc.kml`` entry and otherwise falls back to the first entry
+    with a ``.kml`` suffix.
+
+    Args:
+        data (bytes): The raw KMZ (ZIP) archive contents.
+
+    Returns:
+        str: The decoded KML document text from the archive.
+
+    Raises:
+        ValueError: If the archive contains no ``.kml`` entry.
+    """
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
         names = zf.namelist()
         if "doc.kml" in names:
@@ -88,6 +102,18 @@ def _extract_kml_from_kmz(data: bytes) -> str:
 
 
 def _reject_networklink_stub(text: str) -> None:
+    """Reject a KML document that only links to an online map.
+
+    A My Maps export can be a stub that contains a ``NetworkLink`` to the
+    online map but no actual placemarks; such a file has no usable points.
+
+    Args:
+        text (str): The KML document text to validate.
+
+    Raises:
+        ValueError: If the document contains a ``NetworkLink`` but no
+            ``Placemark`` element.
+    """
     if "<NetworkLink" not in text:
         return
     if "<Placemark" in text:
@@ -115,6 +141,18 @@ def mymaps_export_url(url: str) -> str:
 
 
 def _extract_mid(url: str) -> str:
+    """Extract the ``mid`` map identifier from a My Maps URL.
+
+    Args:
+        url (str): A My Maps URL; a scheme is prepended when one is missing so
+            it can be parsed.
+
+    Returns:
+        str: The value of the ``mid`` query parameter.
+
+    Raises:
+        ValueError: If the URL has no ``mid`` query parameter.
+    """
     if "://" not in url:
         url = "https://" + url
     parsed = urlparse(url)
@@ -127,6 +165,19 @@ def _extract_mid(url: str) -> str:
 
 
 def _ensure_kml(text: str) -> str:
+    """Validate that a response body looks like a KML document.
+
+    Args:
+        text (str): The response text to check, typically from a My Maps
+            export request.
+
+    Returns:
+        str: The original text, unchanged, when it appears to be KML.
+
+    Raises:
+        ValueError: If the text does not begin with an XML or ``<kml``
+            declaration, which usually means the map is not publicly shared.
+    """
     head = text.lstrip()[:1000]
     if head.startswith("<?xml") or "<kml" in head:
         return text
@@ -188,6 +239,15 @@ def parse_layers(kml_text: str) -> list[Layer]:
 
 
 def _kml_namespace(root: ET.Element) -> str:
+    """Return the XML namespace URI declared on the root element.
+
+    Args:
+        root (ET.Element): The root element of a parsed KML document.
+
+    Returns:
+        str: The namespace URI from the root tag, or an empty string when the
+            tag carries no namespace.
+    """
     tag = root.tag
     if tag.startswith("{"):
         return tag[1: tag.index("}")]
@@ -195,16 +255,47 @@ def _kml_namespace(root: ET.Element) -> str:
 
 
 def _tag(ns: str, local: str) -> str:
+    """Build a namespaced ElementTree tag name.
+
+    Args:
+        ns (str): The namespace URI, or an empty string for no namespace.
+        local (str): The local (unqualified) tag name.
+
+    Returns:
+        str: The Clark-notation tag ``{ns}local`` when ``ns`` is set, otherwise
+            the bare ``local`` name.
+    """
     return f"{{{ns}}}{local}" if ns else local
 
 
 def _text(element: ET.Element | None) -> str:
+    """Return the stripped text content of an element.
+
+    Args:
+        element (ET.Element | None): The element to read, or None.
+
+    Returns:
+        str: The element's stripped text, or an empty string when the element
+            is None or has no text.
+    """
     if element is None:
         return ""
     return (element.text or "").strip()
 
 
 def _layer_from_folder(folder: ET.Element, ns: str, index: int) -> Layer:
+    """Build a Layer from a KML ``Folder`` element.
+
+    Args:
+        folder (ET.Element): The ``Folder`` element to convert.
+        ns (str): The KML namespace URI used to qualify child tags.
+        index (int): The folder's 1-based position, used to name unnamed
+            folders as ``Layer {index}``.
+
+    Returns:
+        Layer: A layer holding the folder's point markers, with ``has_route``
+            set when the folder contains a ``LineString``.
+    """
     name = _text(folder.find(_tag(ns, "name"))) or f"Layer {index}"
     points = _placemarks_to_points(folder, ns)
     has_route = folder.find(".//" + _tag(ns, "LineString")) is not None
@@ -212,6 +303,17 @@ def _layer_from_folder(folder: ET.Element, ns: str, index: int) -> Layer:
 
 
 def _placemarks_to_points(parent: ET.Element, ns: str) -> list[Point]:
+    """Convert the direct ``Placemark`` children of an element into points.
+
+    Placemarks without point geometry are skipped.
+
+    Args:
+        parent (ET.Element): The element whose ``Placemark`` children are read.
+        ns (str): The KML namespace URI used to qualify child tags.
+
+    Returns:
+        list[Point]: One point per placemark that carries valid coordinates.
+    """
     points: list[Point] = []
     for placemark in parent.findall(_tag(ns, "Placemark")):
         point = _point_from_placemark(placemark, ns)
@@ -221,6 +323,19 @@ def _placemarks_to_points(parent: ET.Element, ns: str) -> list[Point]:
 
 
 def _point_from_placemark(placemark: ET.Element, ns: str) -> Point | None:
+    """Build a Point from a KML ``Placemark`` element.
+
+    The KML ``coordinates`` value lists longitude before latitude; this
+    function returns them in latitude/longitude order on the Point.
+
+    Args:
+        placemark (ET.Element): The ``Placemark`` element to convert.
+        ns (str): The KML namespace URI used to qualify child tags.
+
+    Returns:
+        Point | None: The parsed point, or None when the placemark has no
+            ``Point`` geometry or its coordinates cannot be parsed.
+    """
     point_elem = placemark.find(_tag(ns, "Point"))
     if point_elem is None:
         return None
@@ -279,6 +394,19 @@ def build_route_links(
 def _split_into_legs(
     points: list[Point], max_stops: int, overlap: int
 ) -> list[list[Point]]:
+    """Split points into overlapping legs that fit the per-route stop cap.
+
+    Consecutive legs share ``overlap`` points so the resulting routes join up.
+
+    Args:
+        points (list[Point]): The ordered points to split.
+        max_stops (int): Maximum number of points allowed in a single leg.
+        overlap (int): Number of points shared between consecutive legs.
+
+    Returns:
+        list[list[Point]]: The points grouped into legs; a single leg when they
+            already fit within ``max_stops``.
+    """
     if len(points) <= max_stops:
         return [points]
     step = max_stops - overlap
@@ -295,12 +423,35 @@ def _split_into_legs(
 
 
 def _coord(p: Point) -> str:
+    """Format a point as a URL-encoded ``lat,lng`` string.
+
+    Args:
+        p (Point): The point to format.
+
+    Returns:
+        str: The point's ``latitude,longitude`` pair, percent-encoded for use
+            in a URL.
+    """
     return quote(f"{p.lat},{p.lng}")
 
 
 def _leg_url(leg: list[Point], travel_mode: str) -> str:
+    """Build the Google Maps directions URL for a single leg.
+
+    The origin is set to ``Current Location``, the last point is the
+    destination, and any earlier points become waypoints.
+
+    Args:
+        leg (list[Point]): The ordered points for this leg; the final point is
+            the destination.
+        travel_mode (str): The Google Maps travel mode to request.
+
+    Returns:
+        str: A Google Maps directions URL for the leg.
+    """
     destination = _coord(leg[-1])
-    base = f"https://www.google.com/maps/dir/?api=1&destination={destination}"
+    origin = quote("Current Location")
+    base = f"https://www.google.com/maps/dir/?api=1&origin={origin}&destination={destination}"
     waypoints_points = leg[:-1]
     if waypoints_points:
         waypoints = "%7C".join(_coord(p) for p in waypoints_points)
