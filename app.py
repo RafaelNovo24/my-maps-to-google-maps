@@ -14,6 +14,7 @@ import streamlit as st
 
 import converter
 import directions
+import gpx
 import i18n
 import journey
 from i18n import t
@@ -43,7 +44,7 @@ def _load_dotenv() -> None:
 
 _load_dotenv()
 
-st.set_page_config(page_title="My Maps → Google Maps", page_icon="🗺️")
+st.set_page_config(page_title="Travel Assistant", page_icon=None)
 
 
 def _flag_data_uri(filename: str) -> str:
@@ -157,6 +158,12 @@ def _estimate(coords: tuple, mode: str) -> directions.RouteEstimate:
     return directions.estimate_route(list(coords), mode)
 
 
+@st.cache_data(show_spinner=False)
+def _convert_to_gpx(name: str, data: bytes) -> gpx.GpxResult:
+    """Convert uploaded KML/KMZ bytes to a GPX result, cached by name and data."""
+    return gpx.kml_to_gpx(converter.kml_from_upload(name, data))
+
+
 if uploaded is not None:
     try:
         layers = _layers_from_upload(uploaded.name, uploaded.getvalue())
@@ -165,6 +172,30 @@ if uploaded is not None:
         st.stop()
 
     stretches = journey.route_stretches(layers)
+
+    st.markdown(
+        """<style>
+a.gpx-jump-link {
+    display: inline-block;
+    padding: 0.25rem 0.75rem;
+    border: 1px solid rgba(49,51,63,0.2);
+    border-radius: 0.5rem;
+    text-decoration: none;
+    color: inherit;
+    font-weight: 600;
+}
+a.gpx-jump-link:hover {
+    border-color: #ff4b4b;
+    color: #ff4b4b;
+}
+</style>""",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'<a class="gpx-jump-link" href="#gpx" target="_self">'
+        f"{t('gpx_jump_button', lang)}</a>",
+        unsafe_allow_html=True,
+    )
 
     if not stretches:
         st.warning(t("no_stretches_warning", lang))
@@ -240,3 +271,34 @@ if uploaded is not None:
 
             if s.points:
                 st.map({"lat": [p.lat for p in s.points], "lon": [p.lng for p in s.points]})
+
+    st.divider()
+    st.subheader(t("gpx_section_header", lang), anchor="gpx")
+    _upload_token = f"{uploaded.name}:{len(uploaded.getvalue())}"
+    if st.session_state.get("gpx_token") != _upload_token:
+        st.session_state.pop("gpx_result", None)
+        st.session_state["gpx_token"] = _upload_token
+    if st.button(t("gpx_convert_button", lang), key="gpx_convert"):
+        with st.spinner(t("gpx_converting", lang)):
+            try:
+                st.session_state["gpx_result"] = _convert_to_gpx(uploaded.name, uploaded.getvalue())
+            # Any KML parse/convert failure must surface as a friendly UI error,
+            # mirroring the existing broad catch above; narrowing it would change
+            # behavior. pylint: disable=broad-exception-caught
+            except Exception:
+                st.session_state["gpx_result"] = None
+                st.error(t("gpx_error", lang))
+    _gpx_result = st.session_state.get("gpx_result")
+    if _gpx_result is not None:
+        if not _gpx_result.has_features:
+            st.info(t("gpx_no_data", lang))
+        else:
+            if _gpx_result.skipped:
+                st.caption(t("gpx_skipped", lang, n=_gpx_result.skipped))
+            st.download_button(
+                t("gpx_download_button", lang),
+                data=_gpx_result.data,
+                file_name=gpx.gpx_filename(uploaded.name),
+                mime="application/gpx+xml",
+                key="gpx_download",
+            )
