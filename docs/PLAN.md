@@ -407,3 +407,70 @@ layers; rename the journey unit to **"Stretch"**; default UI language **Portugue
    geometry-walking logic.
 3. Orchestrator: `uv run pytest -q` → `docker compose up --build` smoke.
 4. `code-sanitizer` (override) → re-run pytest.
+
+### Change request #6 (2026-06-03): accept a Google My Maps share link as input
+
+> **STATUS: approved, implementing.**
+
+#### Decisions (from user)
+- Let the user paste a **My Maps share link**; if the map is public, fetch its KML
+  and run the **same downstream flow** as an uploaded file. File upload still works.
+- **Input UX: `st.tabs(["Upload KML", "My Maps link"])`**, with internal precedence
+  **URL wins when its field is non-empty**, else the uploaded file.
+
+#### Key fact
+The backend already exists in `converter.py`: `kml_from_mymaps_url`, `mymaps_export_url`,
+`_extract_mid`, `_ensure_kml`. **No backend changes, no new dependency** (`requests`
+already used). This is UI wiring + input normalization.
+
+#### 1. Input normalization (`app.py`)
+- Replace the lone `st.file_uploader` with a two-tab block (uploader + a
+  `st.text_input(key="mymaps_url", …)`).
+- Normalize EITHER input to a single `kml_text: str | None` plus `source_name`
+  (GPX filename) and `source_token` (cache/reset key). Gate changes from
+  `if uploaded is not None:` → `if kml_text:`.
+- Refactor cached helpers to be text-keyed:
+  `_kml_text_from_upload(name, data)`, `_kml_text_from_url(url)` (wraps
+  `converter.kml_from_mymaps_url`, cached by URL), `_layers_from_text(kml_text)`,
+  `_convert_to_gpx_text(kml_text) -> gpx.GpxResult`. Remove the old
+  `_layers_from_upload` / `_convert_to_gpx`.
+- Update the ~5 `uploaded.*` sites (gate, layers call, `_upload_token`→`source_token`,
+  GPX convert call, GPX filename→`source_name`).
+
+#### 2. URL fetch + errors
+- `_kml_text_from_url` shown under `st.spinner(t("spinner_fetching", lang))`.
+- `_friendly_url_error(exc, lang)`: `ValueError` with "mid" → `err_url_no_mid`, else
+  → `err_url_not_shared`. `requests.HTTPError` → `err_url_fetch`;
+  `requests.RequestException` → `err_url_network`. Never crash.
+
+#### 3. Security
+- `kml_from_mymaps_url` only requests the constructed `google.com/maps/d/kml?mid=…`
+  URL (from the extracted `mid`), never the raw user URL → not an open SSRF. **Do not
+  add any path that fetches the raw user URL** (e.g. to expand short links).
+
+#### 4. GPX filename for URL source
+- `source_name = "mymaps.kml"` → `gpx.gpx_filename` yields `mymaps.gpx`.
+
+#### 5. i18n (PT+EN) — ~10 keys
+`tab_upload`, `tab_mymaps`, `mymaps_url_label`, `mymaps_url_placeholder`,
+`mymaps_url_help`, `spinner_fetching`, `err_url_no_mid`, `err_url_not_shared`,
+`err_url_fetch`, `err_url_network`.
+
+#### Files
+- Changed: `app.py`, `i18n.py`, `tests/test_converter.py`, `tests/test_app_smoke.py`,
+  `README.md`. Untouched: `converter.py`, `gpx.py`, `directions.py`, `journey.py`,
+  `pyproject.toml`.
+
+#### Tests
+- `test_converter.py`: mock `requests.get` for `kml_from_mymaps_url` (KML success,
+  KMZ via `PK` bytes, not-shared/non-KML → `ValueError`, HTTP error, timeout) +
+  `_extract_mid`/`mymaps_export_url` missing-`mid`.
+- `test_app_smoke.py`: patch `converter.kml_from_mymaps_url` (clear `st.cache_data`
+  between cases) — URL happy-path renders flow, URL error-path shows `st.error` and
+  no results, source-switch resets `gpx_result`; keep the upload tests.
+
+#### Build sequence (when approved)
+1. `python-implementer` (override briefing): app.py tabs + normalization + helpers;
+   i18n keys; tests; README.
+2. Orchestrator: `uv run pytest -q` → `docker compose up --build` smoke.
+3. `code-sanitizer` (override) → re-run pytest.

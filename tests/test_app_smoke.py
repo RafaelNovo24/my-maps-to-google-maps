@@ -3,7 +3,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import streamlit as st
 from streamlit.testing.v1 import AppTest
+
+import converter
 
 APP = str(Path(__file__).resolve().parent.parent / "app.py")
 
@@ -71,3 +74,55 @@ def test_gpx_jump_button_anchors_to_section():
     md_values = [m.value for m in at.markdown]
     assert any('href="#gpx"' in v for v in md_values)
     assert any('target="_self"' in v for v in md_values)
+
+
+def test_url_happy_path(monkeypatch):
+    """Pasting a My Maps URL fetches KML and renders the GPX section."""
+    kml_str = _KML_POINT_AND_LINE.decode("utf-8")
+    monkeypatch.setattr(converter, "kml_from_mymaps_url", lambda url, *a, **k: kml_str)
+    st.cache_data.clear()
+    at = AppTest.from_file(APP).run()
+    at.text_input(key="mymaps_url").set_value(
+        "https://www.google.com/maps/d/edit?mid=HAPPYTEST"
+    ).run()
+    assert not at.exception
+    assert len(at.error) == 0
+    subheader_values = [s.value for s in at.subheader]
+    assert any("GPX" in v for v in subheader_values)
+
+
+def test_url_error_path(monkeypatch):
+    """A ValueError from kml_from_mymaps_url shows an error and no GPX section."""
+    def _raise_not_shared(url, *a, **k):
+        raise ValueError("map must be publicly shared")
+
+    monkeypatch.setattr(converter, "kml_from_mymaps_url", _raise_not_shared)
+    st.cache_data.clear()
+    at = AppTest.from_file(APP).run()
+    at.text_input(key="mymaps_url").set_value(
+        "https://www.google.com/maps/d/edit?mid=ERRORTEST"
+    ).run()
+    assert not at.exception
+    assert len(at.error) > 0
+    subheader_values = [s.value for s in at.subheader]
+    assert not any("GPX" in v for v in subheader_values)
+
+
+def test_source_switch_url_then_upload(monkeypatch):
+    """Switching from URL source to file upload renders the flow for the file."""
+    kml_str = _KML_POINT_AND_LINE.decode("utf-8")
+    monkeypatch.setattr(converter, "kml_from_mymaps_url", lambda url, *a, **k: kml_str)
+    st.cache_data.clear()
+    at = AppTest.from_file(APP).run()
+    at.text_input(key="mymaps_url").set_value(
+        "https://www.google.com/maps/d/edit?mid=SWITCHTEST"
+    ).run()
+    assert not at.exception
+    # now clear the URL and upload a file instead
+    at.text_input(key="mymaps_url").set_value("").run()
+    at.get("file_uploader")[0].upload(
+        "switch.kml", _KML_POINT_AND_LINE, "application/vnd.google-earth.kml+xml"
+    ).run()
+    assert not at.exception
+    subheader_values = [s.value for s in at.subheader]
+    assert any("GPX" in v for v in subheader_values)
