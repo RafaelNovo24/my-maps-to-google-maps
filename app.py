@@ -10,6 +10,7 @@ import base64
 import os
 from pathlib import Path
 
+import requests
 import streamlit as st
 
 import converter
@@ -126,21 +127,69 @@ travel_mode = st.selectbox(
     format_func=lambda m: t(f"mode_{m}", lang),
 )
 
-uploaded = st.file_uploader(t("upload_label", lang), type=["kml"])
+_tab_upload, _tab_url = st.tabs([t("tab_upload", lang), t("tab_mymaps", lang)])
+with _tab_upload:
+    uploaded = st.file_uploader(t("upload_label", lang), type=["kml"])
+with _tab_url:
+    mymaps_url = st.text_input(
+        t("mymaps_url_label", lang),
+        key="mymaps_url",
+        placeholder=t("mymaps_url_placeholder", lang),
+        help=t("mymaps_url_help", lang),
+    )
 
 
 @st.cache_data(show_spinner=False)
-def _layers_from_upload(name: str, data: bytes) -> list[converter.Layer]:
-    """Parse uploaded KML/KMZ bytes into layers, caching by name and data.
+def _kml_text_from_upload(name: str, data: bytes) -> str:
+    """Return the KML text from uploaded file bytes, cached by name and content.
 
     Args:
-        name (str): The uploaded file's name, used to detect a KMZ archive.
-        data (bytes): The raw uploaded file contents.
+        name (str): The uploaded file's name, used to detect KMZ archives.
+        data (bytes): The raw file contents.
 
     Returns:
-        list[converter.Layer]: The layers parsed from the file.
+        str: The decoded KML document text.
     """
-    return converter.parse_layers(converter.kml_from_upload(name, data))
+    return converter.kml_from_upload(name, data)
+
+
+@st.cache_data(show_spinner=False)
+def _kml_text_from_url(url: str) -> str:
+    """Fetch and return KML text from a My Maps share link, cached by URL.
+
+    Args:
+        url (str): A My Maps share URL containing a ``mid`` parameter.
+
+    Returns:
+        str: The KML document text fetched from My Maps.
+    """
+    return converter.kml_from_mymaps_url(url)
+
+
+@st.cache_data(show_spinner=False)
+def _layers_from_text(kml_text: str) -> list[converter.Layer]:
+    """Parse KML text into layers, cached by the KML content.
+
+    Args:
+        kml_text (str): The KML document text to parse.
+
+    Returns:
+        list[converter.Layer]: The layers parsed from the KML.
+    """
+    return converter.parse_layers(kml_text)
+
+
+@st.cache_data(show_spinner=False)
+def _convert_to_gpx_text(kml_text: str) -> gpx.GpxResult:
+    """Convert KML text to a GPX result, cached by the KML content.
+
+    Args:
+        kml_text (str): The KML document text to convert.
+
+    Returns:
+        gpx.GpxResult: The GPX conversion result.
+    """
+    return gpx.kml_to_gpx(kml_text)
 
 
 @st.cache_data(show_spinner=False)
@@ -158,15 +207,53 @@ def _estimate(coords: tuple, mode: str) -> directions.RouteEstimate:
     return directions.estimate_route(list(coords), mode)
 
 
-@st.cache_data(show_spinner=False)
-def _convert_to_gpx(name: str, data: bytes) -> gpx.GpxResult:
-    """Convert uploaded KML/KMZ bytes to a GPX result, cached by name and data."""
-    return gpx.kml_to_gpx(converter.kml_from_upload(name, data))
+def _friendly_url_error(exc: ValueError, lang: str) -> str:
+    """Map a My Maps fetch ValueError to a localized message.
+
+    Args:
+        exc (ValueError): The exception raised by ``kml_from_mymaps_url``.
+        lang (str): The current UI language code.
+
+    Returns:
+        str: A user-readable localized error message.
+    """
+    if "mid" in str(exc).lower():
+        return t("err_url_no_mid", lang)
+    return t("err_url_not_shared", lang)
 
 
-if uploaded is not None:
+kml_text: str | None = None
+source_name = ""
+source_token = ""
+
+if mymaps_url.strip():
+    with st.spinner(t("spinner_fetching", lang)):
+        try:
+            kml_text = _kml_text_from_url(mymaps_url.strip())
+            source_name = "mymaps.kml"
+            source_token = f"url:{mymaps_url.strip()}"
+        except ValueError as exc:
+            st.error(_friendly_url_error(exc, lang))
+        except requests.HTTPError:
+            st.error(t("err_url_fetch", lang))
+        except requests.RequestException:
+            st.error(t("err_url_network", lang))
+elif uploaded is not None:
     try:
-        layers = _layers_from_upload(uploaded.name, uploaded.getvalue())
+        kml_text = _kml_text_from_upload(uploaded.name, uploaded.getvalue())
+        source_name = uploaded.name
+        source_token = f"file:{uploaded.name}:{len(uploaded.getvalue())}"
+    # Any upload/decode failure must surface as a friendly UI error and halt;
+    # narrowing the catch would change behavior. pylint: disable=broad-exception-caught
+    except Exception as exc:
+        st.error(str(exc))
+        st.stop()
+
+if kml_text:
+    try:
+        layers = _layers_from_text(kml_text)
+    # Any KML parse failure must surface as a friendly UI error and halt;
+    # narrowing the catch would change behavior. pylint: disable=broad-exception-caught
     except Exception as exc:
         st.error(str(exc))
         st.stop()
@@ -274,14 +361,13 @@ a.gpx-jump-link:hover {
 
     st.divider()
     st.subheader(t("gpx_section_header", lang), anchor="gpx")
-    _upload_token = f"{uploaded.name}:{len(uploaded.getvalue())}"
-    if st.session_state.get("gpx_token") != _upload_token:
+    if st.session_state.get("gpx_token") != source_token:
         st.session_state.pop("gpx_result", None)
-        st.session_state["gpx_token"] = _upload_token
+        st.session_state["gpx_token"] = source_token
     if st.button(t("gpx_convert_button", lang), key="gpx_convert"):
         with st.spinner(t("gpx_converting", lang)):
             try:
-                st.session_state["gpx_result"] = _convert_to_gpx(uploaded.name, uploaded.getvalue())
+                st.session_state["gpx_result"] = _convert_to_gpx_text(kml_text)
             # Any KML parse/convert failure must surface as a friendly UI error,
             # mirroring the existing broad catch above; narrowing it would change
             # behavior. pylint: disable=broad-exception-caught
@@ -298,7 +384,7 @@ a.gpx-jump-link:hover {
             st.download_button(
                 t("gpx_download_button", lang),
                 data=_gpx_result.data,
-                file_name=gpx.gpx_filename(uploaded.name),
+                file_name=gpx.gpx_filename(source_name),
                 mime="application/gpx+xml",
                 key="gpx_download",
             )

@@ -67,9 +67,14 @@ docker compose run --rm app uv run pytest -q       # inside the container
 
 ## Getting your map out of My Maps
 
-In Google My Maps, open the map → the **Menu (⋮)** in the left panel →
-**Export to KML/KMZ** → choose **KML** → download the file, then upload it here.
-(KMZ upload isn't supported via the UI yet — export as KML.)
+You have two options:
+
+1. **Upload a KML file**: In Google My Maps, open the map → the **Menu (⋮)** in
+   the left panel → **Export to KML/KMZ** → choose **KML** → download the file,
+   then upload it in the **Upload KML** tab. (Export as KML, not KMZ.)
+2. **Paste a share link**: If your map is publicly shared, copy its URL (it must
+   contain `mid=`) and paste it in the **My Maps link** tab. The app fetches the
+   KML for you.
 
 ## Languages
 
@@ -85,4 +90,6 @@ in the KML.
   multiple links.
 - Distance/time need a `GOOGLE_MAPS_API_KEY` (billed Routes API); without it the
   app still produces links.
-- KMZ upload and pasting a My Maps share link aren't available (KML upload only).
+- You can upload a `.kml` file **or** paste a public My Maps share link (the link
+  must contain `mid=` and the map must be publicly shared — "anyone with the link
+  can view"). KMZ upload directly is not supported via the UI; export as KML.

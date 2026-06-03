@@ -47,6 +47,30 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "gpx_no_data": "Não há percursos nem marcadores para converter neste ficheiro.",
         "gpx_skipped": "{n} forma(s) ignorada(s) (o GPX não suporta polígonos).",
         "gpx_jump_button": "Conversor KML → GPX ↓",
+        "tab_upload": "Carregar KML",
+        "tab_mymaps": "Link do My Maps",
+        "mymaps_url_label": "Cole o link de partilha do Google My Maps",
+        "mymaps_url_placeholder": "https://www.google.com/maps/d/edit?mid=...",
+        "mymaps_url_help": (
+            "O mapa tem de estar partilhado publicamente. "
+            "O link tem de conter mid=."
+        ),
+        "spinner_fetching": "A obter o mapa do My Maps…",
+        "err_url_no_mid": (
+            "Não foi possível encontrar mid= no link. "
+            "Links encurtados não são suportados — use o link completo do My Maps."
+        ),
+        "err_url_not_shared": (
+            "Não foi possível ler o mapa. "
+            "Confirme que está partilhado publicamente "
+            "(qualquer pessoa com o link pode ver)."
+        ),
+        "err_url_fetch": (
+            "Não foi possível obter o mapa. Verifique o link e se está público."
+        ),
+        "err_url_network": (
+            "Problema de rede ao contactar a Google. Tente novamente."
+        ),
     },
     "en": {
         "title": "My Maps → Google Maps",
@@ -86,6 +110,27 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "gpx_no_data": "No tracks or pins to convert in this file.",
         "gpx_skipped": "{n} shape(s) skipped (GPX has no polygons).",
         "gpx_jump_button": "KML → GPX converter ↓",
+        "tab_upload": "Upload KML",
+        "tab_mymaps": "My Maps link",
+        "mymaps_url_label": "Paste the Google My Maps share link",
+        "mymaps_url_placeholder": "https://www.google.com/maps/d/edit?mid=...",
+        "mymaps_url_help": (
+            "The map must be publicly shared. "
+            "The link must contain mid=."
+        ),
+        "spinner_fetching": "Fetching the map from My Maps…",
+        "err_url_no_mid": (
+            "Couldn't find mid= in the link. "
+            "Shortened links aren't supported — use the full My Maps link."
+        ),
+        "err_url_not_shared": (
+            "Couldn't read the map. "
+            "Make sure it's publicly shared (anyone with the link can view)."
+        ),
+        "err_url_fetch": (
+            "Couldn't fetch the map. Check the link and that it's public."
+        ),
+        "err_url_network": "Network problem reaching Google. Please try again.",
     },
 }
 

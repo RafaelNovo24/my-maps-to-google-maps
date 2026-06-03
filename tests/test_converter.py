@@ -2,19 +2,14 @@ from __future__ import annotations
 
 import io
 import zipfile
+from unittest.mock import MagicMock, patch
 from urllib.parse import unquote
 
 import pytest
+import requests as requests_lib
 
-from converter import (
-    Layer,
-    Point,
-    _ensure_kml,
-    build_route_links,
-    kml_from_upload,
-    mymaps_export_url,
-    parse_layers,
-)
+from converter import (Point, _ensure_kml, build_route_links, kml_from_mymaps_url,
+                       kml_from_upload, mymaps_export_url, parse_layers)
 
 # ---------------------------------------------------------------------------
 # KML fixtures
@@ -535,3 +530,85 @@ def test_has_route_no_folder_with_linestring():
 def test_has_route_no_folder_points_only():
     layers = parse_layers(_KML_NO_FOLDER_POINTS_ONLY)
     assert layers[0].has_route is False
+
+
+# ---------------------------------------------------------------------------
+# kml_from_mymaps_url
+# ---------------------------------------------------------------------------
+
+_VALID_KML = '<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"></kml>'
+
+_HTML_NOT_SHARED = "<!DOCTYPE html><html><body>Sign in</body></html>"
+
+
+def _make_response(content: bytes, text: str, raise_for_status=None) -> MagicMock:
+    """Build a fake ``requests`` response with the given content, text and error."""
+    resp = MagicMock()
+    resp.content = content
+    resp.text = text
+    if raise_for_status is not None:
+        resp.raise_for_status.side_effect = raise_for_status
+    else:
+        resp.raise_for_status.return_value = None
+    return resp
+
+
+def test_mymaps_export_url_mid_param():
+    """A My Maps edit URL is rewritten to the forced-KML export URL."""
+    result = mymaps_export_url("https://www.google.com/maps/d/edit?mid=ABC")
+    assert result == "https://www.google.com/maps/d/kml?mid=ABC&forcekml=1"
+
+
+def test_mymaps_export_url_no_mid_raises_valueerror():
+    """A URL without a mid= parameter raises ValueError."""
+    with pytest.raises(ValueError):
+        mymaps_export_url("https://www.google.com/maps/d/edit?foo=bar")
+
+
+def test_kml_from_mymaps_url_success_kml():
+    """A successful fetch returning KML bytes yields the KML text."""
+    resp = _make_response(content=_VALID_KML.encode("utf-8"), text=_VALID_KML)
+    with patch("converter.requests.get", return_value=resp):
+        result = kml_from_mymaps_url("https://www.google.com/maps/d/edit?mid=ABC")
+    assert result == _VALID_KML
+
+
+def test_kml_from_mymaps_url_success_kmz():
+    """A fetch returning KMZ bytes is unzipped to the inner KML text."""
+    inner_kml = "<kml><Document><name>KMZ</name></Document></kml>"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("doc.kml", inner_kml)
+    kmz_bytes = buf.getvalue()
+    assert kmz_bytes[:2] == b"PK"
+    resp = _make_response(content=kmz_bytes, text="")
+    with patch("converter.requests.get", return_value=resp):
+        result = kml_from_mymaps_url("https://www.google.com/maps/d/edit?mid=ABC")
+    assert result == inner_kml
+
+
+def test_kml_from_mymaps_url_not_shared_raises():
+    """An HTML sign-in page (map not public) raises a 'publicly shared' ValueError."""
+    resp = _make_response(content=_HTML_NOT_SHARED.encode("utf-8"), text=_HTML_NOT_SHARED)
+    with patch("converter.requests.get", return_value=resp):
+        with pytest.raises(ValueError, match="publicly shared"):
+            kml_from_mymaps_url("https://www.google.com/maps/d/edit?mid=ABC")
+
+
+def test_kml_from_mymaps_url_http_error_propagates():
+    """An HTTP error from the response propagates as requests.HTTPError."""
+    resp = _make_response(
+        content=b"",
+        text="",
+        raise_for_status=requests_lib.HTTPError("403"),
+    )
+    with patch("converter.requests.get", return_value=resp):
+        with pytest.raises(requests_lib.HTTPError):
+            kml_from_mymaps_url("https://www.google.com/maps/d/edit?mid=ABC")
+
+
+def test_kml_from_mymaps_url_timeout_propagates():
+    """A network timeout during the fetch propagates as requests.Timeout."""
+    with patch("converter.requests.get", side_effect=requests_lib.Timeout):
+        with pytest.raises(requests_lib.Timeout):
+            kml_from_mymaps_url("https://www.google.com/maps/d/edit?mid=ABC")
