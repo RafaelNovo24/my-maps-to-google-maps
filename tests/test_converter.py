@@ -199,10 +199,10 @@ def test_build_route_links_two_points_has_waypoint():
     assert f"{pts[0].lat}%2C{pts[0].lng}" in links[0]
 
 
-def test_build_route_links_two_points_no_origin():
+def test_build_route_links_origin_is_current_location():
     pts = _pts(2)
     links = build_route_links(pts)
-    assert "origin=" not in links[0]
+    assert "origin=Current%20Location" in links[0]
     assert f"destination={pts[1].lat}%2C{pts[1].lng}" in links[0]
 
 
@@ -247,9 +247,6 @@ def test_build_route_links_ten_points_two_links_overlap():
 def test_build_route_links_ten_points_order_preserved():
     pts = _pts(10)
     links = build_route_links(pts)
-    # no origin= anywhere
-    assert "origin=" not in links[0]
-    assert "origin=" not in links[1]
     # leg 1's first waypoint is pts[0]; leg 2's destination is pts[9]
     leg1_wps_part = [p for p in links[0].split("&") if p.startswith("waypoints=")]
     first_wp = unquote(leg1_wps_part[0][len("waypoints="):].split("%7C")[0])
@@ -262,10 +259,10 @@ def test_build_route_links_twelve_points_two_links():
     assert len(links) == 2
 
 
-def test_build_route_links_no_origin_in_any_link():
+def test_build_route_links_origin_is_current_location_in_every_link():
     for n in (2, 5, 9):
         for link in build_route_links(_pts(n)):
-            assert "origin=" not in link
+            assert "origin=Current%20Location" in link
 
 
 def test_build_route_links_destination_present():

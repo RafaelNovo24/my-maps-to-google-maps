@@ -24,9 +24,14 @@ Distances and times come from the **Google Routes API**, which needs an API key
 from a **billing-enabled** Google Cloud project (enable the *Routes API*).
 
 - Provide it via the environment variable **`GOOGLE_MAPS_API_KEY`**.
+- **Easiest:** copy `.env.example` to `.env` and paste your key after the `=`.
+  `.env` is gitignored (never committed) and is loaded automatically by both the
+  app and Docker Compose. You can still set the variable in your shell instead.
 - **Without a key the app still works** — it shows the stretches, the summary
   table, and the Google Maps links — but the distance/time cells read
   "unavailable".
+- Restrict the key to the **Routes API** in Google Cloud Console so a leaked key
+  can't be used for other billed services.
 - Driving uses an optimistic–pessimistic *range* (two API calls per stretch);
   other travel modes show a single estimate. Routes API calls are billed per
   request (traffic-aware calls cost more) — check current Google pricing.

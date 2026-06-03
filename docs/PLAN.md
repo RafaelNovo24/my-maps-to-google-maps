@@ -170,7 +170,14 @@ string check so normal/large KML isn't double-parsed.
 **Decisions (from user):** real Google **Directions API** ETAs; **hide** pin-only
 layers; rename the journey unit to **"Stretch"**; default UI language **Portuguese**.
 
-> **STATUS: planned, not implemented** (user asked to plan only).
+> **STATUS: IMPLEMENTED & VERIFIED (2026-06-02).** 148 tests pass (local +
+> in-container); app serves on 8501. Divergences from the plan as written below:
+> used the **Routes API** (not the legacy Directions API — see §4 "Verified API");
+> the link functions (`kml_from_mymaps_url` / `mymaps_export_url` / `_extract_mid`)
+> were **kept** (reserved for the deferred "open KMZ" work), not removed; the
+> language selector shipped as a **`st.selectbox`** (the flag UI is CR#4 below).
+> Added modules `directions.py`, `i18n.py`, `journey.py`. Live ETA path is
+> unverified (needs a real `GOOGLE_MAPS_API_KEY`).
 
 #### 1. Internationalization — English + Portuguese (default PT)
 - New `i18n.py`: `TRANSLATIONS = {"pt": {...}, "en": {...}}` covering every UI
@@ -265,3 +272,68 @@ layers; rename the journey unit to **"Stretch"**; default UI language **Portugue
 7. Verify: pytest (local + container), real Galiza KML (with and without key),
    serve + health.
 8. `code-sanitizer` pass.
+
+### Change request #4 (2026-06-02): "Current Location" origin + flag language selector
+
+> **STATUS: planned, not implemented.**
+
+#### Part A — start each route link at "Current Location" (decided)
+- `converter.py` `_leg_url`: add an explicit origin of "Current Location" so links
+  no longer omit the origin:
+  `…/dir/?api=1&origin=Current%20Location&destination=<last>&waypoints=<…>&travelmode=<mode>`
+  (value = `quote("Current Location")` → `Current%20Location`; `+` form also works).
+  Structure otherwise unchanged: `waypoints = points[:-1]`, `destination = points[-1]`;
+  still up to 9 of our points per link (Current Location + ≤8 waypoints + destination).
+- Tests (`tests/test_converter.py`): flip the assertion that **no** `origin=` appears
+  → assert `origin=Current%20Location` is present in every link; keep the
+  destination / waypoints / overlap / order checks.
+- **Caveat (verify after):** `Current Location` is NOT officially supported in the
+  `api=1` URL — Maps may honor it (start at the device location, show route + ETA +
+  mode) or treat it as a place search. Verify by opening a generated link in a
+  browser. Fallback if it misbehaves: use the stretch's first point (`leg[0]`) as
+  the origin.
+- Background: links previously **omitted** origin (Google's documented "your
+  location" default), but the route/ETA/mode didn't render reliably for the user;
+  an explicit origin is the attempted fix.
+
+#### Part B — flag language selector (image flags, top-right; decided: image flags)
+- Replace the language **selectbox** with two **clickable flag images** at the
+  top-right: Portugal (`pt.svg`) for PT and the UK flag (`gb.svg`) for EN.
+- **State preservation is critical — switching language must NOT lose the uploaded
+  KML.** Use **in-session `st.button`s + `st.session_state["lang"]`** (an in-session
+  rerun keeps `st.file_uploader` state). Do **NOT** use `<a href="?lang=…">`
+  query-param links: those trigger a full page reload that would drop the upload.
+- **Rendering (image flags — Windows-safe; emoji flags render as letters on Windows):**
+  bundle `assets/pt.svg` + `assets/gb.svg`; display them on the buttons via a CSS
+  `<style>` block (target the buttons by key/position) — no new dependency. The
+  active language's flag is highlighted. Right-align with `st.columns([spacer, 1, 1])`
+  at the very top. If CSS-on-button proves brittle, fall back to a small
+  clickable-image component (adds a dependency).
+- `i18n.py` unchanged; `lang` now comes from `st.session_state` (default `"pt"`).
+- Tests: update `test_language_switch_no_crash` to click the EN flag button
+  (`at.button[...]`) instead of driving the selectbox.
+
+#### Files
+- New: `assets/pt.svg`, `assets/gb.svg`.
+- Changed: `converter.py` + `tests/test_converter.py` (Part A); `app.py` +
+  `tests/test_app_smoke.py` (Part B).
+
+#### Deployment notes (from this session — actionable, separate from A/B)
+- **Netlify cannot host this app** (static + serverless only; Streamlit needs a
+  long-lived server + WebSocket, so the deploy shows blank/not-found). Use
+  **Streamlit Community Cloud** (deploy from GitHub; `GOOGLE_MAPS_API_KEY` in
+  Secrets) or a **container host** (Cloud Run / Render / Railway / Fly) using the
+  existing `Dockerfile`.
+- For Cloud Run / Render etc., bind the platform's **`$PORT`**: change the Docker
+  `CMD` to `--server.port=${PORT:-8501}` (keep `--server.address=0.0.0.0`), and add
+  a short "Deploy" section to `README.md`. (Future task, not part of A/B.)
+- `GOOGLE_MAPS_API_KEY`: Google Cloud Console → enable **Routes API** + billing →
+  Credentials → create API key → restrict to Routes API.
+
+#### Build sequence (when approved)
+1. **Part A:** `_leg_url` origin + flip tests → run tests → **manually open a
+   generated link to confirm Maps honors `Current Location`** (else fall back to
+   `leg[0]`).
+2. **Part B:** `assets/` flags + `app.py` flag header + smoke test → boot/serve verify.
+3. (Optional) `$PORT` Docker tweak + README "Deploy" section.
+4. `code-sanitizer` → full pytest + Docker rebuild.
